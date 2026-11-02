@@ -2,3 +2,22 @@ mkdir でファインダーを作る
 touch でファイルを作る
 cd でファインダーに入る
 cd .. でファインダーから抜ける
+
+npm init -y
+npm install discord.js 
+
+mkdir -p src data
+touch src/index.js .env .gitignore
+→これでもできるね
+
+node src/index.js
+npm list discord.js dotenv
+
+node test-database.js
+
+確認するやつ
+git ls-files --error-unmatch .env
+追跡を逃れるやつ
+git rm --cached .env
+全体を確認できるやつ
+git status
