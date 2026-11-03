@@ -13,20 +13,26 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  StringSelectMenuBuilder,
 } = require("discord.js");
+
 
 // データベースの機能を読み込む
 const {
   addEvent,
   getEventsByMonth,
+  getEventById,
+  deleteEvent,
 } = require("./database");
+
 
 // Botの作成
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 
-// /calendar コマンドの定義
+
+// /calendar コマンド
 const commands = [
   new SlashCommandBuilder()
     .setName("calendar")
@@ -34,7 +40,8 @@ const commands = [
     .toJSON(),
 ];
 
-// Discordにコマンドを登録する
+
+// Discordにコマンドを登録
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(
     process.env.DISCORD_TOKEN
@@ -50,6 +57,7 @@ async function registerCommands() {
 
   console.log("✅ /calendar コマンドを登録しました！");
 }
+
 
 // カレンダーを作る
 function createCalendarEmbed(year, month) {
@@ -78,7 +86,8 @@ function createCalendarEmbed(year, month) {
     .setFooter({ text: "Calendar Bot" });
 }
 
-// カレンダー操作ボタンを作る
+
+// カレンダー操作ボタン
 function createCalendarButtons(year, month) {
   const navigationRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -111,7 +120,8 @@ function createCalendarButtons(year, month) {
   return [navigationRow, addRow, eventsRow];
 }
 
-// 予定追加フォームを作る
+
+// 予定追加フォーム
 function createEventModal() {
   const modal = new ModalBuilder()
     .setCustomId("calendar_event_modal")
@@ -165,7 +175,8 @@ function createEventModal() {
   return modal;
 }
 
-// 日付の形式と実在する日付を確認する
+
+// 日付チェック
 function isValidDate(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return false;
@@ -181,12 +192,14 @@ function isValidDate(date) {
   );
 }
 
-// 時刻の形式を確認する
+
+// 時刻チェック
 function isValidTime(time) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
 }
 
-// 今月の予定一覧を作る
+
+// 予定一覧のEmbed
 function createEventsEmbed(year, month, events) {
   const embed = new EmbedBuilder()
     .setTitle(`📋 ${year}年${month + 1}月の予定一覧`)
@@ -225,14 +238,87 @@ function createEventsEmbed(year, month, events) {
   return embed;
 }
 
+
+// 削除する予定を選択するメニュー
+function createEventSelectMenu(events, year, month) {
+  const options = events.slice(0, 25).map((event) => {
+    const time = event.start_time || "時間未設定";
+
+    return {
+      label: event.title.slice(0, 100),
+      description: `${event.event_date} / ${time}`.slice(0, 100),
+      value: String(event.id),
+    };
+  });
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`calendar_delete_select_${year}_${month}`)
+    .setPlaceholder("削除したい予定を選択してください")
+    .addOptions(options);
+
+  return [
+    new ActionRowBuilder().addComponents(selectMenu),
+  ];
+}
+
+
+// 削除確認画面
+function createDeleteConfirmEmbed(event) {
+  const time = event.start_time || event.end_time
+    ? `${event.start_time || "未設定"} ～ ${event.end_time || "未設定"}`
+    : "時間未設定";
+
+  return new EmbedBuilder()
+    .setTitle("🗑️ 予定の削除確認")
+    .setDescription(
+      `以下の予定を削除しますか？\n\n` +
+      `📌 **${event.title}**\n` +
+      `📅 ${event.event_date}\n` +
+      `🕒 ${time}\n` +
+      `📝 ${event.memo || "メモなし"}\n\n` +
+      "※削除すると元に戻せません。"
+    )
+    .setColor(0xe74c3c);
+}
+
+
+// 削除確認ボタン
+function createDeleteConfirmButtons(
+  eventId,
+  year,
+  month,
+  listMessageId
+) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(
+        `calendar_delete_confirm_${eventId}_${year}_${month}_${listMessageId}`
+      )
+      .setLabel("削除する")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
+
+    new ButtonBuilder()
+      .setCustomId("calendar_delete_cancel")
+      .setLabel("キャンセル")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return [row];
+}
+
+
 // Botが起動したとき
 client.once("ready", () => {
   console.log(`✅ ${client.user.tag} としてログインしました！`);
 });
 
-// コマンドとボタン、フォームの処理
+
+// コマンド・ボタン・メニュー・フォーム
 client.on("interactionCreate", async (interaction) => {
   try {
+
+
     // /calendar コマンド
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName !== "calendar") return;
@@ -252,14 +338,59 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
+
+    // 予定選択メニュー
+    if (interaction.isStringSelectMenu()) {
+      if (!interaction.customId.startsWith("calendar_delete_select_")) {
+        return;
+      }
+
+      const parts = interaction.customId.split("_");
+
+      const year = Number(parts[3]);
+      const month = Number(parts[4]);
+
+      const eventId = Number(interaction.values[0]);
+
+      const event = getEventById(
+        eventId,
+        interaction.guildId
+      );
+
+      if (!event) {
+        await interaction.reply({
+          content: "この予定は既に削除されているか、存在しません。",
+          ephemeral: true,
+        });
+
+        return;
+      }
+
+      await interaction.reply({
+        embeds: [createDeleteConfirmEmbed(event)],
+        components: createDeleteConfirmButtons(
+          eventId,
+          year,
+          month,
+          interaction.message.id
+        ),
+        ephemeral: true,
+      });
+
+      return;
+    }
+
+
     // ボタンの処理
     if (interaction.isButton()) {
+
 
       // 予定追加ボタン
       if (interaction.customId === "calendar_add") {
         await interaction.showModal(createEventModal());
         return;
       }
+
 
       // 今月の予定一覧ボタン
       if (interaction.customId.startsWith("calendar_events_")) {
@@ -276,11 +407,99 @@ client.on("interactionCreate", async (interaction) => {
 
         await interaction.reply({
           embeds: [createEventsEmbed(year, month, events)],
-          ephemeral: true,
+          components: events.length
+            ? createEventSelectMenu(events, year, month)
+            : [],
+          ephemeral: false,
         });
 
         return;
       }
+
+
+      // 削除キャンセル
+      if (interaction.customId === "calendar_delete_cancel") {
+        await interaction.update({
+          content: "削除をキャンセルしました。",
+          embeds: [],
+          components: [],
+        });
+
+        return;
+      }
+
+
+      // 削除確認
+      if (interaction.customId.startsWith("calendar_delete_confirm_")) {
+        const parts = interaction.customId.split("_");
+
+        const eventId = Number(parts[3]);
+        const year = Number(parts[4]);
+        const month = Number(parts[5]);
+        const listMessageId = parts[6];
+
+        const event = getEventById(
+          eventId,
+          interaction.guildId
+        );
+
+        if (!event) {
+          await interaction.update({
+            content: "この予定は既に削除されているか、存在しません。",
+            embeds: [],
+            components: [],
+          });
+
+          return;
+        }
+
+        const deleted = deleteEvent(
+          eventId,
+          interaction.guildId
+        );
+
+        if (!deleted) {
+          await interaction.update({
+            content: "予定を削除できませんでした。",
+            embeds: [],
+            components: [],
+          });
+
+          return;
+        }
+
+        // 元の公開予定一覧を更新
+        const updatedEvents = getEventsByMonth(
+          interaction.guildId,
+          year,
+          month
+        );
+
+        const listMessage = await interaction.channel.messages
+          .fetch(listMessageId)
+          .catch(() => null);
+
+        if (listMessage) {
+          await listMessage.edit({
+            embeds: [
+              createEventsEmbed(year, month, updatedEvents),
+            ],
+            components: updatedEvents.length
+              ? createEventSelectMenu(updatedEvents, year, month)
+              : [],
+          });
+        }
+
+        // 削除した本人に結果を表示
+        await interaction.update({
+          content: `🗑️ **${event.title}** を削除しました！`,
+          embeds: [],
+          components: [],
+        });
+
+        return;
+      }
+
 
       // 月移動ボタン
       const parts = interaction.customId.split("_");
@@ -316,7 +535,8 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    // 予定追加フォームの送信処理
+
+    // 予定追加フォームの送信
     if (interaction.isModalSubmit()) {
       if (interaction.customId !== "calendar_event_modal") return;
 
@@ -340,12 +560,14 @@ client.on("interactionCreate", async (interaction) => {
         .getTextInputValue("event_memo")
         .trim();
 
+
       // 入力チェック
       if (!title) {
         await interaction.reply({
           content: "予定名を入力してください。",
           ephemeral: true,
         });
+
         return;
       }
 
@@ -355,6 +577,7 @@ client.on("interactionCreate", async (interaction) => {
             "日付は YYYY-MM-DD 形式で、実在する日付を入力してください。",
           ephemeral: true,
         });
+
         return;
       }
 
@@ -364,6 +587,7 @@ client.on("interactionCreate", async (interaction) => {
             "開始時間は HH:mm 形式で入力してください。例：15:00",
           ephemeral: true,
         });
+
         return;
       }
 
@@ -373,6 +597,7 @@ client.on("interactionCreate", async (interaction) => {
             "終了時間は HH:mm 形式で入力してください。例：16:00",
           ephemeral: true,
         });
+
         return;
       }
 
@@ -381,6 +606,7 @@ client.on("interactionCreate", async (interaction) => {
           content: "終了時間は開始時間より後にしてください。",
           ephemeral: true,
         });
+
         return;
       }
 
@@ -394,6 +620,7 @@ client.on("interactionCreate", async (interaction) => {
         memo,
         createdBy: interaction.user.id,
       });
+
 
       // 登録完了メッセージ
       await interaction.reply({
@@ -409,6 +636,7 @@ client.on("interactionCreate", async (interaction) => {
 
       return;
     }
+
   } catch (error) {
     console.error("❌ 処理中にエラーが発生しました:", error);
 
@@ -421,7 +649,8 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// 起動処理
+
+// Botの起動処理
 async function main() {
   try {
     await registerCommands();
