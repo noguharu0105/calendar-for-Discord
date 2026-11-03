@@ -76,6 +76,24 @@ function getEventById(eventId, guildId) {
 module.exports = {
   db,
   getEventsByDate,
+  getEventsByMonth,
   addEvent,
   getEventById,
 };
+
+// 指定した月の予定を取得する
+function getEventsByMonth(guildId, year, month) {
+  const firstDay = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+  const lastDate = new Date(year, month + 1, 0).getDate();
+
+  const lastDay = `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDate).padStart(2, "0")}`;
+
+  return db.prepare(`
+    SELECT * FROM events
+    WHERE guild_id = ?
+      AND event_date >= ?
+      AND event_date <= ?
+    ORDER BY event_date ASC, start_time ASC
+  `).all(guildId, firstDay, lastDay);
+}
