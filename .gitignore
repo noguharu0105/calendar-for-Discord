@@ -1,0 +1,18 @@
+# Node.jsの依存パッケージ
+node_modules/
+
+# 秘密情報
+.env
+.env.*
+
+# 環境変数のサンプルはGitHubに公開できる
+!.env.example
+
+# SQLiteデータベース
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# macOS
+.DS_Store
